@@ -1,0 +1,456 @@
+{
+  "name": "TickTick Autoscheduler",
+  "description": null,
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -368,
+        416
+      ],
+      "id": "7cbe7ebd-b652-45ea-99e2-57924e21a793",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * ──────────────────────────────────────────────────────────────────────────────\n * FLATTEN TICKTICK PROJECT  →  ONE-DIMENSIONAL TASK ARRAY\n * ──────────────────────────────────────────────────────────────────────────────\n */\nconst rows = $input.all();\n\n/* ────────── user config injected by previous Set-node ────────── */\nconst USER_TZ   = $json.TICKTICK_TIMEZONE ?? 'Europe/Budapest';\nconst TZ_OFFSET = $json.TICKTICK_OFFSET  ?? '+0200'; \n\n/* ────────── helpers ────────── */\nconst pad = n => n.toString().padStart(2, '0');\nfunction toTicktick(dateString, offset = TZ_OFFSET) {\n  if (!dateString) return null;\n  const d = new Date(dateString);\n  return (\n    d.getFullYear()               + '-' +\n    pad(d.getMonth() + 1)         + '-' +\n    pad(d.getDate())              + 'T' +\n    pad(d.getHours())             + ':' +\n    pad(d.getMinutes())           + ':' +\n    pad(d.getSeconds())           +\n    offset\n  );\n}\n\n/* ────────── flatten everything ────────── */\nconst flat = rows.flatMap(item => {\n  const pj        = item.json.project ?? {};\n  const projectId   = pj.id   ?? 'N/A';\n  const projectName = pj.name ?? 'N/A';\n\n  const tasks = item.json.tasks ?? [];\n\n  return tasks\n    // ─── SZŰRÉS: csak nyitott, DUE-DATE-tel rendelkező taskok maradnak ───\n    .filter(t => t.status !== 2 && t.dueDate)\n    .flatMap(parent => {\n      const base = {\n        projectId,\n        projectName,\n        parentTaskId : parent.id,\n        parentTitle  : parent.title,\n\n        taskId    : parent.id,\n        title     : parent.title,\n        content   : parent.content ?? '',\n\n        startDate : toTicktick(parent.startDate),\n        dueDate   : toTicktick(parent.dueDate),  \n        isAllDay : parent.isAllDay,\n        timeZone  : USER_TZ,\n        priority  : parent.priority,\n        tags      : Array.isArray(parent.tags)\n                      ? parent.tags.map(t => typeof t === 'string' ? t : (t.name ?? t))\n                      : [],\n        status    : parent.status,\n        etag      : parent.etag,\n      };\n\n      // csak akkor adjuk tovább, ha tényleg van dueDate\n      if (!base.dueDate) return [];\n\n      const subs = Array.isArray(parent.items)\n        ? parent.items.filter(s => s.status !== 2 && s.dueDate)\n        : [];\n\n      const subObjects = subs.map(sub => ({\n        ...base,\n        taskId    : sub.id,\n        title     : sub.title,\n        content   : sub.content ?? '',\n\n        startDate : toTicktick(sub.startDate),\n        dueDate   : toTicktick(sub.dueDate),\n        \n\n        priority  : sub.priority ?? parent.priority,\n        status    : sub.status  ?? parent.status,\n      }));\n\n      return [base, ...subObjects];\n    });\n});\n\n/* ────────── hand over to the next node ────────── */\nreturn flat.map(row => ({ json: row }));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -192,
+        336
+      ],
+      "id": "8a8cd837-7497-40fe-8cd7-7c1db9d00f7a",
+      "name": "Flatten"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1360,
+        32
+      ],
+      "id": "488d065c-1455-45e3-a1fc-f65807171d75",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "url": "https://api.ticktick.com/open/v1/project",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -880,
+        448
+      ],
+      "id": "5049ef13-a76b-4af8-af2f-18806b248f3c",
+      "name": "Query Ticktick projects",
+      "retryOnFail": true,
+      "notes": "Get access token based on this doc: https://developer.ticktick.com/api#/openapi?id=authorization"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c790c8fd-4455-45c9-aa1b-282c280ef4fa",
+              "leftValue": "={{$json.kind}}",
+              "rightValue": "TASK",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -672,
+        448
+      ],
+      "id": "eeefffb0-69d2-4978-b820-491a9e9bb28a",
+      "name": "Filter projects"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.ticktick.com/open/v1/project/{{ $json.id }}/data",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -128,
+        544
+      ],
+      "id": "423e54b7-ace8-4591-9491-3480bfe3417c",
+      "name": "Query Ticktick tasks",
+      "retryOnFail": true,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "numberInputs": 4
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "99f4f40f-6de6-472d-a162-4de52007be3b",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "options": {
+          "timezone": "={{ $json.TIMEZONE }}"
+        }
+      },
+      "type": "n8n-nodes-base.dateTime",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        176
+      ],
+      "id": "1829610d-2bf9-46cd-9ff1-e26b836a4f43",
+      "name": "Get current Date & Time"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.googleapis.com/calendar/v3/freeBusy",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleCalendarOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"timeMin\":  \"{{ new Date().toISOString() }}\",\n  \"timeMax\":  \"{{ (() => {\n       const d = new Date();\n       d.setHours(0,0,0,0);\n       d.setDate(d.getDate() + $('Defaults').item.json.PLAN_DAYS_AHEAD);\n       return d.toISOString();\n     })() }}\",\n  \"timeZone\": \"{{ $('Defaults').item.json.TIMEZONE }}\",\n  \"items\": {{ JSON.stringify($('Defaults').item.json.googleCalendarIds.map(id => ({id}))) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -528,
+        256
+      ],
+      "id": "d2e16c48-255f-4d5f-861d-88e2e09eb328",
+      "name": "Get Busy slots",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"workSlots\": {\n    \"monday\": [\n      [\n        \"09:00\",\n        \"12:00\"\n      ],\n      [\n        \"13:00\",\n        \"17:00\"\n      ]\n    ],\n    \"tuesday\": [\n      [\n        \"09:00\",\n        \"12:00\"\n      ],\n      [\n        \"13:00\",\n        \"17:00\"\n      ]\n    ],\n    \"wednesday\": [\n      [\n        \"09:00\",\n        \"12:00\"\n      ],\n      [\n        \"13:00\",\n        \"17:00\"\n      ]\n    ],\n    \"thursday\": [\n      [\n        \"09:00\",\n        \"12:00\"\n      ],\n      [\n        \"13:00\",\n        \"17:00\"\n      ]\n    ],\n    \"friday\": [\n      [\n        \"09:00\",\n        \"12:00\"\n      ],\n      [\n        \"13:00\",\n        \"17:00\"\n      ]\n    ],\n    \"saturday\": [],\n    \"sunday\": []\n  },\n  \"googleCalendarIds\": [\n    \"primary\"\n  ],\n  \"PLAN_DAYS_AHEAD\": 3,\n  \"DEFAULT_TASK_DURATION_MIN\": 30,\n  \"TASK_BUFFER_MIN\": 10,\n  \"TIMEZONE\": \"Europe/Budapest\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1152,
+        176
+      ],
+      "id": "40ddf8df-b839-47fa-a10b-2a0b328b545d",
+      "name": "Defaults"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.ticktick.com/open/v1/task/{{ $json.taskId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"id\": \"{{ $json.taskId }}\",\n  \"projectId\": \"{{ $json.projectId }}\",\n  \"title\": \"{{$json.title}}\",\n  \"startDate\": \"{{ $json.startDate }}\",\n  \"dueDate\": \"{{ $json.dueDate }}\",\n  \"content\": \"{{ JSON.stringify($json.content || '').slice(1,-1) }}\",\n  \"isAllDay\": \"{{ $json.allDay }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        560,
+        144
+      ],
+      "id": "146a202c-0525-47af-abc8-9e96ed02584c",
+      "name": "Write back ticktick tasks",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "options": {
+          "reset": false
+        }
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        448,
+        16
+      ],
+      "id": "5b36e99e-9d59-4469-b9da-73382962dddd",
+      "name": "Loop Over Items1"
+    },
+    {
+      "parameters": {
+        "amount": 3
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        736,
+        144
+      ],
+      "id": "27496828-799f-4fc8-b3f3-12b2f363658c",
+      "name": "Wait",
+      "webhookId": "4685ba24-5b80-4017-bd28-761da500517a"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0,30 8-18 * * 1-5"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1392,
+        336
+      ],
+      "id": "7ef31a06-b2ad-421e-a0fa-26ea6ddcd8de",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ──────────────────────────────────────────────────────────────────────────────\n// Scheduling Node — JavaScript Implementation (timezone-aware via Luxon)\n\n// 1) Read inputs\nconst items      = $input.all();\nconst configItem = items[0].json;\nconst rawTasks   = items.slice(1).map(i => i.json);\n\n// 2) Unpack configuration\nconst {\n  workSlots,\n  PLAN_DAYS_AHEAD           = 1,\n  DEFAULT_TASK_DURATION_MIN = 15,\n  TASK_BUFFER_MIN           = 10,\n  TIMEZONE,\n  currentDate\n} = configItem;\n\nif (!TIMEZONE) {\n  throw new Error('TIMEZONE missing from Defaults — set it to an IANA name like \"Europe/Budapest\"');\n}\n\n// 3) Helpers — every formatted timestamp is rendered in TIMEZONE (TickTick rejects ms)\nfunction fmt(jsDate) {\n  return DateTime.fromJSDate(jsDate)\n    .setZone(TIMEZONE)\n    .toFormat(\"yyyy-MM-dd'T'HH:mm:ssZZZ\");\n}\n\n// Local weekday name without depending on container/system locale\nconst WEEKDAYS = ['', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];\n\n// 4) Determine now, cursor, and window end — all in TIMEZONE\nconst nowDt = currentDate\n  ? DateTime.fromISO(String(currentDate), { zone: TIMEZONE })\n  : DateTime.now().setZone(TIMEZONE);\n\nconst tenMin = 10 * 60 * 1000;\nconst firstCursorDt = DateTime.fromMillis(\n  Math.ceil(nowDt.toMillis() / tenMin) * tenMin,\n  { zone: TIMEZONE }\n);\n\nconst todayMidDt  = nowDt.startOf('day');\nconst windowEndDt = todayMidDt.plus({ days: PLAN_DAYS_AHEAD - 1 }).endOf('day');\n\n// JS Date counterparts (busyPeriods arithmetic uses plain Dates)\nconst now         = nowDt.toJSDate();\nconst firstCursor = firstCursorDt.toJSDate();\nconst todayMid    = todayMidDt.toJSDate();\nconst windowEnd   = windowEndDt.toJSDate();\n\n// 5) Prepare tasks\nconst tasks = rawTasks.map(t => ({ ...t, done: false, allDay: false }));\ntasks.forEach(t => {\n  // Only dueDate is required: it anchors the task in time for sorting.\n  // startDate is rewritten on placement (or normalized to midnight for leftovers),\n  // so its absence is fine.\n  t.exclude = !t.dueDate || (t.tags || []).includes('dfix');\n});\nlet toSchedule = tasks.filter(t => !t.exclude && new Date(t.dueDate) <= windowEnd);\n\n// 6) Sort tasks: overdue → today → future, with priority within each group\ntoSchedule.sort((a, b) => {\n  const da = new Date(a.dueDate), db = new Date(b.dueDate);\n  function group(d) {\n    if (d < now) return 0;\n    const dDay = DateTime.fromJSDate(d).setZone(TIMEZONE).startOf('day');\n    return +dDay === +todayMidDt ? 1 : 2;\n  }\n  const ga = group(da), gb = group(db);\n  if (ga !== gb) return ga - gb;\n  if (ga < 2) return (b.priority || 0) - (a.priority || 0);\n  return da - db;\n});\n\n// 7) Normalize dueDates to midnight in TIMEZONE and mark all-day\ntoSchedule.forEach(t => {\n  const midnightStr = DateTime.fromISO(t.dueDate, { zone: TIMEZONE })\n    .startOf('day')\n    .toFormat(\"yyyy-MM-dd'T'HH:mm:ssZZZ\");\n  t.startDate = midnightStr;\n  t.dueDate   = midnightStr;\n  t.allDay    = true;\n});\n\n// 8) Build raw work slots — built in TIMEZONE so DST is handled correctly\nconst allSlots = [];\nfor (let day = 0; day < PLAN_DAYS_AHEAD; day++) {\n  const dayDt = todayMidDt.plus({ days: day });\n  const wd = WEEKDAYS[dayDt.weekday];\n  (workSlots[wd] || []).forEach(([s, e]) => {\n    const [sh, sm] = s.split(':').map(Number);\n    const [eh, em] = e.split(':').map(Number);\n    let ssDt = dayDt.set({ hour: sh, minute: sm, second: 0, millisecond: 0 });\n    let seDt = dayDt.set({ hour: eh, minute: em, second: 0, millisecond: 0 });\n    if (day === 0) {\n      if (seDt <= firstCursorDt) return;\n      if (ssDt < firstCursorDt) ssDt = firstCursorDt;\n    }\n    if (ssDt < seDt) {\n      allSlots.push({ start: ssDt.toJSDate(), end: seDt.toJSDate() });\n    }\n  });\n}\n\nconst rawSlots = allSlots.map(s => ({ start: s.start, end: s.end }));\n\n// 9) Collect busy periods (Google free/busy + dfix tasks treated as busy)\nconst busyInput = items.find(i => i.json.kind === 'calendar#freeBusy');\nconst googleBusy = [];\nif (busyInput) {\n  Object.values(busyInput.json.calendars || {}).forEach(cal =>\n    (cal.busy || []).forEach(b => googleBusy.push({ start: new Date(b.start), end: new Date(b.end) }))\n  );\n}\n\nconst dfixBusy = tasks\n  .filter(\n    t =>\n      (t.tags || []).includes('dfix') &&\n      t.startDate && t.dueDate &&\n      t.isAllDay === false\n  )\n  .map(t => {\n    const sb = new Date(t.startDate);\n    const eb = new Date(t.dueDate);\n    const start = sb < now ? now : sb;\n    const end = eb > windowEnd ? windowEnd : eb;\n    return { start, end };\n  });\n\nconst busyPeriods = [...googleBusy, ...dfixBusy].sort((a, b) => a.start - b.start);\n\nconst googleBusyDebug   = googleBusy.map(b => ({ start: b.start, end: b.end }));\nconst dfixBusyDebug     = dfixBusy.map(b => ({ start: b.start, end: b.end }));\nconst busyPeriodsDebug  = busyPeriods.map(b => ({ start: b.start, end: b.end }));\n\n// 10) Subtract busy periods from work slots → free slots\nconst free = allSlots.reduce((acc, slot) => {\n  let cur = slot.start;\n  busyPeriods.filter(b => b.end > slot.start && b.start < slot.end)\n    .forEach(b => {\n      if (b.start > cur) acc.push({ start: cur, end: b.start });\n      cur = new Date(Math.max(cur.getTime(), b.end.getTime()));\n    });\n  if (cur < slot.end) acc.push({ start: cur, end: slot.end });\n  return acc;\n}, []);\nconst freeSlots = free.map(f => ({ start: f.start, end: f.end }));\n\n// 11) Place tasks into free slots\nconst scheduled = [];\nfor (const task of toSchedule) {\n  let dur = DEFAULT_TASK_DURATION_MIN;\n  const ttag = (task.tags || []).find(x => /^d(\\d+)$/.test(x));\n  if (ttag) dur = parseInt(ttag.match(/^d(\\d+)$/)[1], 10);\n  task.allDay = false;\n  for (const fs of free) {\n    if ((fs.end - fs.start) / 60000 >= dur + TASK_BUFFER_MIN) {\n      const startStr   = fmt(fs.start);\n      const dueDateObj = new Date(fs.start.getTime() + dur * 60000);\n      const dueStr     = fmt(dueDateObj);\n      task.startDate = startStr;\n      task.dueDate   = dueStr;\n      task.allDay    = false;\n      task.done      = true;\n      fs.start       = new Date(dueDateObj.getTime() + TASK_BUFFER_MIN * 60000);\n      break;\n    }\n  }\n  scheduled.push(task);\n}\n\nconst scheduledDebug = scheduled.map(t => ({ taskId: t.taskId, startDate: t.startDate, dueDate: t.dueDate, done: t.done, allDay: t.allDay }));\n\n// 11.5) Leftover tasks become all-day on the last day of the planning window\nconst lastMidStr = todayMidDt\n  .plus({ days: PLAN_DAYS_AHEAD - 1 })\n  .toFormat(\"yyyy-MM-dd'T'HH:mm:ssZZZ\");\nscheduled.forEach(t => {\n  if (!t.done) {\n    t.startDate = lastMidStr;\n    t.dueDate   = lastMidStr;\n    t.allDay    = true;\n  }\n});\n\n// 12) Production return\nreturn scheduled.map(t => ({ json: t }));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        16
+      ],
+      "id": "1ff62df5-ceea-4ea8-9ee9-c61a844ba458",
+      "name": "Schedule"
+    }
+  ],
+  "connections": {
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Flatten",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Query Ticktick tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flatten": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Defaults",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Ticktick projects": {
+      "main": [
+        [
+          {
+            "node": "Filter projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter projects": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Ticktick tasks": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Schedule",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get current Date & Time": {
+      "main": [
+        [
+          {
+            "node": "Get Busy slots",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Get Busy slots": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Defaults": {
+      "main": [
+        [
+          {
+            "node": "Get current Date & Time",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Query Ticktick projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write back ticktick tasks": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items1": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Write back ticktick tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Defaults",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  }
+}

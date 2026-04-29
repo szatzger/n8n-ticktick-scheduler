@@ -1,0 +1,20 @@
+# Local secrets — NEVER commit
+secrets/.env
+secrets/*.env
+!secrets/.env.template
+
+# Local recon / refactor artifacts (kept out of public repo)
+.live/
+
+# Old iterations of the workflow before this repo was structured
+n8n_workflow.json
+n8n_scheduling_node.js
+scheduler.js
+scheduling_node_spec.md
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
