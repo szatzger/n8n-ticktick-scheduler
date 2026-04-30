@@ -47,6 +47,10 @@ The full walkthrough is in **[docs/GUIDE.md](./docs/GUIDE.md)**. It covers, in o
 
 The TickTick API is rate-limited. **Paid tier:** 30 requests/minute. **Free tier:** undocumented, but in practice this workflow makes one request per TickTick project plus one per scheduled task per run, which can comfortably exceed free-tier allowances on accounts with many projects. Test on the free tier at your own risk.
 
+## Related: a more capable TickTick n8n node
+
+If you need richer TickTick API access — V2 endpoints, custom fields, completed-tasks queries, a TickTick trigger node — check out [hansdoebel/n8n-nodes-ticktick](https://github.com/hansdoebel/n8n-nodes-ticktick), a community-maintained custom n8n node that exposes much more of TickTick's surface than the plain HTTP requests this workflow uses. The tradeoff is that it requires installing a custom node and the V2 API is unofficial, but if you want to extend this scheduler beyond what the public OpenAPI offers, that's the place to look.
+
 ## No support
 
 This is a community-shared workflow, not a product. **I do not provide individual support, debugging help, or feature requests.** Issues and pull requests with clear, reproducible improvements are welcome but may go unanswered.
